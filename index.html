@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Astrolabacus — Ball-in-Track Puzzle (US Pat. 5,645,278)</title>
+<style>
+  :root { --bg0:#070a14; --bg1:#121a2e; --panel:rgba(14,20,38,.84); --line:rgba(255,255,255,.12); --txt:#e7ecff; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; overflow:hidden; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; color:var(--txt); }
+  #app { position:fixed; inset:0; background:radial-gradient(1200px 820px at 58% 18%, var(--bg1), var(--bg0)); }
+  canvas { display:block; touch-action:none; }
+  .hud { position:fixed; left:16px; top:14px; max-width:320px; pointer-events:none; }
+  .hud h1 { font-size:16px; margin:0 0 2px; letter-spacing:.3px; }
+  .hud .sub { font-size:11.5px; opacity:.62; line-height:1.45; }
+  .panel { position:fixed; right:16px; top:14px; width:236px; background:var(--panel); backdrop-filter:blur(10px);
+           border:1px solid var(--line); border-radius:14px; padding:14px; box-shadow:0 10px 40px rgba(0,0,0,.45); }
+  .panel h2 { font-size:11px; text-transform:uppercase; letter-spacing:1.4px; opacity:.55; margin:0 0 8px; }
+  button { cursor:pointer; border:1px solid var(--line); background:rgba(255,255,255,.06); color:var(--txt);
+           border-radius:9px; padding:8px 0; font-size:13.5px; font-weight:600; transition:.12s; width:100%; margin-top:7px; }
+  button:first-of-type { margin-top:0; }
+  button:hover { background:rgba(255,255,255,.16); }
+  button:active { transform:translateY(1px); }
+  #twist { background:#2b2150; border-color:#7a5fff; }
+  #flip { background:#15324a; border-color:#3aa0ff; }
+  .two { display:flex; gap:7px; } .two button { margin-top:0; }
+  .counts { display:flex; gap:6px; margin-top:12px; }
+  .chip { flex:1; text-align:center; border-radius:9px; padding:6px 0; font-weight:700; font-size:14px; color:#0b1020; }
+  .divider { height:1px; background:var(--line); margin:12px 0; }
+  .status { font-size:12px; opacity:.85; margin-top:10px; min-height:16px; }
+  .status.solved { color:#8affa0; opacity:1; font-weight:700; }
+  .cfg { font-size:12px; opacity:.7; margin-top:6px; }
+  .hint { position:fixed; left:16px; bottom:14px; font-size:11.5px; opacity:.55; max-width:62%; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div class="hud">
+  <h1>Astrolabacus</h1>
+  <div class="sub">Ball-in-Track Puzzle · U.S. Patent 5,645,278 (Harris, 1997).
+  Six segments (RR, GR, BB, GB, YY, GY) with two tunnels each. <b>Twist</b> cycles B→R→Y; <b>Flip</b> turns it
+  over (state 1↔2) — six configurations in all. The 18-ball loop shifts. 36 balls, 9 each.</div>
+</div>
+
+<div class="panel">
+  <h2>Controls</h2>
+  <button id="twist">Twist ⟳ — B→R→Y</button>
+  <button id="flip">Flip ⤺ — state 1 ↔ 2</button>
+  <div class="two">
+    <button id="shiftL">◀ shift</button>
+    <button id="shiftR">shift ▶</button>
+  </div>
+  <div class="divider"></div>
+  <button id="shuffle">Shuffle</button>
+  <button id="reset">Reset (solved)</button>
+  <button id="spin">Auto-rotate: On</button>
+  <div class="counts">
+    <div class="chip" style="background:#e23b3b" id="c-red">9</div>
+    <div class="chip" style="background:#34c24a" id="c-grn">9</div>
+    <div class="chip" style="background:#2f6bff;color:#fff" id="c-blu">9</div>
+    <div class="chip" style="background:#ffd23b" id="c-yel">9</div>
+  </div>
+  <div class="cfg" id="cfg">State B2</div>
+  <div class="status" id="status">★ Solved</div>
+</div>
+
+<div class="hint" id="hint">Grab a glowing ball and drag along the loop to shift it · Twist / Flip to reach the six states · drag empty space to orbit</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const app = document.getElementById('app');
+const el = id => document.getElementById(id);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100);
+camera.position.set(1.9, 1.5, 4.0);
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace; app.appendChild(renderer.domElement);
+const renderOnce=()=>renderer.render(scene,camera);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.minDistance = 2.6; controls.maxDistance = 9; controls.target.set(-0.1,0,0);
+let autoRotateWanted = true; controls.autoRotateSpeed = 0.9;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.62));
+const kl=new THREE.DirectionalLight(0xffffff,1.5); kl.position.set(3,5,6); scene.add(kl);
+const fl=new THREE.DirectionalLight(0x88aaff,0.5); fl.position.set(-4,-2,3); scene.add(fl);
+const rl=new THREE.PointLight(0xffffff,28,30); rl.position.set(-3,3,5); scene.add(rl);
+
+const root = new THREE.Group(); root.position.x=-0.1; scene.add(root);
+const puz = new THREE.Group(); root.add(puz);
+const cradleGroup = new THREE.Group(); puz.add(cradleGroup);
+
+// ===================== puzzle definition =====================
+const HEX={ red:0xe23b3b, grn:0x34c24a, blu:0x2f6bff, yel:0xffd23b };
+const PAL=['red','grn','blu','yel'];
+const BALL_R=0.135;
+// colours sampled directly from the powerstrike B2 diagram (objective pixel grid).
+// solved B2: loop (t0,2,4,6,8,10)=R,Y,G,B,G,R ; inside (t1,t7)=G,R ; outside (t3,t5,t9,t11)=B,B,Y,Y. 9 of each.
+const homeColor=['red','grn', 'yel','blu', 'grn','blu', 'blu','red', 'grn','yel', 'red','yel'];
+let tunnelBalls=homeColor.map(c=>[c,c,c]);
+const solvedState=()=>homeColor.map(c=>[c,c,c]);
+
+// ---- the six states: which tunnel of each body is on the loop (sel[body]) ----
+// green bodies are 1(GR),3(GB),5(GY); pure bodies 0(RR),2(BB),4(YY) have identical tunnels.
+const SEL={ B2:[0,0,0,0,0,0], R2:[1,0,1,0,1,0], Y2:[0,1,0,1,0,1],
+            B1:[1,1,1,1,1,1], R1:[1,0,1,0,1,0], Y1:[0,1,0,1,0,1] };
+let stateLetter='B', stateFlip=2;
+let sel=SEL[stateLetter+stateFlip].slice();
+const activeTunnel=i=>2*i+sel[i];
+const lockedTunnel=i=>2*i+(1-sel[i]);
+function nextTwist(l,f){ return (f===1? {B:'R',R:'Y',Y:'B'} : {B:'Y',Y:'R',R:'B'})[l]; }
+
+// ---- C-bent capsule geometry ----
+const A=0.6, B=0.7, H=0.30, PHI=0.85;
+const Lp = 4*B + 2*Math.PI*A;
+function loopFlat(u){ let d=((u%1)+1)%1*Lp;
+  if (d<2*B) return new THREE.Vector3(A, B-d, 0); d-=2*B;
+  if (d<Math.PI*A){ const p=-d/A; return new THREE.Vector3(A*Math.cos(p), -B+A*Math.sin(p), 0); } d-=Math.PI*A;
+  if (d<2*B) return new THREE.Vector3(-A, -B+d, 0); d-=2*B;
+  const p=Math.PI-d/A; return new THREE.Vector3(A*Math.cos(p), B+A*Math.sin(p), 0);
+}
+const ymax=B+A, rB=ymax/PHI;
+function bend(p){ const phi=(p.y/ymax)*PHI;
+  return new THREE.Vector3(p.x, rB*Math.sin(phi) + p.z*(-Math.sin(phi)), -rB*(1-Math.cos(phi)) + p.z*Math.cos(phi)); }
+function mDir(yflat){ const phi=(yflat/ymax)*PHI; return new THREE.Vector3(0,-Math.sin(phi),Math.cos(phi)); }
+
+const loopPos=[];
+for (let j=0;j<18;j++) loopPos.push(bend(loopFlat(j/18)));
+const Lpos=[], Kpos=[], pivot=[], tangent=[], frontBody=[true,false,false,true,false,false];
+for (let i=0;i<6;i++){
+  const L=[loopPos[3*i],loopPos[3*i+1],loopPos[3*i+2]]; Lpos.push(L);
+  const yc=loopFlat((3*i+1)/18).y, m=mDir(yc), n=frontBody[i]?1:-1;
+  Kpos.push(L.map(p=> p.clone().addScaledVector(m, n*2*H)));
+  pivot.push(L[1].clone().addScaledVector(m, n*H));
+  tangent.push(loopPos[3*i+2].clone().sub(loopPos[3*i]).normalize());
+}
+
+let seqEntry=[];
+function rebuildSeq(){ seqEntry=[]; for (let i=0;i<6;i++){ const t=activeTunnel(i); for (let s=0;s<3;s++) seqEntry.push({t,s}); } }
+rebuildSeq();
+
+// ===================== materials =====================
+// cradles are now glassy TUNNELS that enclose the balls (balls run through them)
+const cradleHot={}, cradleCool={}, cradleFaint={}, ballMat={}, ballDim={}, ballFaint={};
+for (const c of PAL){
+  cradleHot[c]=new THREE.MeshPhysicalMaterial({color:HEX[c],roughness:0.12,metalness:0,transmission:0.6,thickness:0.5,transparent:true,opacity:0.45,side:THREE.DoubleSide,clearcoat:1,clearcoatRoughness:0.1});
+  cradleCool[c]=new THREE.MeshPhysicalMaterial({color:new THREE.Color(HEX[c]).multiplyScalar(0.7),roughness:0.2,metalness:0,transmission:0.5,transparent:true,opacity:0.34,side:THREE.DoubleSide});
+  cradleFaint[c]=new THREE.MeshStandardMaterial({color:new THREE.Color(HEX[c]).multiplyScalar(0.5),roughness:0.85,metalness:0,transparent:true,opacity:0.16,side:THREE.DoubleSide});
+  ballMat[c]=new THREE.MeshStandardMaterial({color:HEX[c],roughness:0.16,metalness:0.35,emissive:HEX[c],emissiveIntensity:0.3});
+  ballDim[c]=new THREE.MeshStandardMaterial({color:new THREE.Color(HEX[c]).multiplyScalar(0.72),roughness:0.5,metalness:0.1});
+  ballFaint[c]=new THREE.MeshStandardMaterial({color:HEX[c],roughness:0.5,metalness:0.05,transparent:true,opacity:0.32});
+}
+const pinMat=new THREE.MeshStandardMaterial({color:0x9aa3b8,roughness:0.4,metalness:0.6});
+
+// ===================== meshes =====================
+const ballGeo=new THREE.SphereGeometry(BALL_R,26,18);
+const ballByTS=[]; for (let t=0;t<12;t++){ ballByTS.push([]); for (let s=0;s<3;s++){ const m=new THREE.Mesh(ballGeo,ballMat.red); m.userData={t,s}; puz.add(m); ballByTS[t].push(m); } }
+const ballFlat=ballByTS.flat();
+const cradleByTunnel=new Array(12);
+const tmpGeo=[];
+function clearCradles(){ while(cradleGroup.children.length){ cradleGroup.remove(cradleGroup.children.pop()); } tmpGeo.forEach(g=>g.dispose()); tmpGeo.length=0; }
+function makeTube(pts,mat){ const g=new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),20,BALL_R*1.34,16,false); tmpGeo.push(g); const m=new THREE.Mesh(g,mat); cradleGroup.add(m); return m; }
+function arcPts(P){ return [ P[0].clone().lerp(P[1],-0.35), P[0], P[1], P[2], P[2].clone().lerp(P[1],-0.35) ]; }
+
+function buildCradles(){
+  clearCradles();
+  for (let i=0;i<6;i++){
+    const aT=activeTunnel(i), kT=lockedTunnel(i);
+    cradleByTunnel[aT]=makeTube(arcPts(Lpos[i]), cradleHot[homeColor[aT]]);
+    cradleByTunnel[kT]=makeTube(arcPts(Kpos[i]), frontBody[i]?cradleCool[homeColor[kT]]:cradleFaint[homeColor[kT]]);
+  }
+  const tp=bend(new THREE.Vector3(0,ymax-0.02,0)), bp=bend(new THREE.Vector3(0,-(ymax-0.02),0));
+  const d1=new THREE.Mesh(new THREE.TorusGeometry(0.11,0.022,10,26),pinMat); d1.position.copy(tp); cradleGroup.add(d1);
+  const d2=new THREE.Mesh(new THREE.TorusGeometry(0.055,0.02,10,22),pinMat); d2.position.copy(tp); cradleGroup.add(d2);
+  const sp=new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.085,0.05,22),pinMat); sp.position.copy(bp); cradleGroup.add(sp);
+}
+function placeBalls(){
+  for (let i=0;i<6;i++){
+    const aT=activeTunnel(i), kT=lockedTunnel(i), kMat=frontBody[i]?ballDim:ballFaint;
+    for (let s=0;s<3;s++){ const a=ballByTS[aT][s]; a.position.copy(Lpos[i][s]); a.material=ballMat[tunnelBalls[aT][s]];
+      const k=ballByTS[kT][s]; k.position.copy(Kpos[i][s]); k.material=kMat[tunnelBalls[kT][s]]; }
+  }
+}
+function buildScene(){ rebuildSeq(); buildCradles(); placeBalls(); refresh(); renderOnce(); }
+
+// ===================== shift mechanic =====================
+function commitShift(dir){ const cols=seqEntry.map(e=>tunnelBalls[e.t][e.s]); const out=cols.map((_,i)=>cols[(i-dir+18)%18]); seqEntry.forEach((e,i)=>tunnelBalls[e.t][e.s]=out[i]); }
+function recolorLoop(){ for (let i=0;i<18;i++){ const e=seqEntry[i]; ballByTS[e.t][e.s].material=ballMat[tunnelBalls[e.t][e.s]]; } }
+function offsetLoop(frac){ for (let i=0;i<18;i++){ const e=seqEntry[i]; const to=frac>=0?loopPos[(i+1)%18]:loopPos[(i-1+18)%18]; ballByTS[e.t][e.s].position.copy(loopPos[i].clone().lerp(to,Math.abs(frac))); } }
+function loopHome(){ for (let i=0;i<18;i++){ const e=seqEntry[i]; ballByTS[e.t][e.s].position.copy(loopPos[i]); } }
+
+let animating=false, foldAnim=null;
+function doShift(dir){ commitShift(dir); recolorLoop(); loopHome(); refresh(); renderOnce(); }
+
+// ===================== twist / flip (swing the bodies whose selection changes) =====================
+function transition(toL,toF){
+  if (animating) return;
+  const newSel=SEL[toL+toF].slice();
+  const bodies=[]; for (let i=0;i<6;i++) if (newSel[i]!==sel[i]) bodies.push(i);
+  if (!bodies.length){ stateLetter=toL; stateFlip=toF; el('cfg').textContent='State '+toL+toF; return; }
+  const items=[];
+  bodies.forEach(i=>{ const axis=tangent[i], piv=pivot[i];
+    [2*i,2*i+1].forEach(t=>{ const cm=cradleByTunnel[t]; items.push({m:cm,axis,piv,p0:cm.position.clone(),q0:cm.quaternion.clone()});
+      for (let s=0;s<3;s++){ const bm=ballByTS[t][s]; items.push({m:bm,axis,piv,p0:bm.position.clone(),q0:bm.quaternion.clone()}); } }); });
+  animating=true; foldAnim={items,t0:performance.now(),dur:820};
+  el('cfg').textContent='…';
+  setTimeout(()=>{ if(animating){ sel=newSel; stateLetter=toL; stateFlip=toF; foldAnim=null; buildScene(); el('cfg').textContent='State '+toL+toF; animating=false; renderOnce(); } }, 860);
+}
+function doTwist(){ transition(nextTwist(stateLetter,stateFlip), stateFlip); }
+function doFlip(){ transition(stateLetter, stateFlip===1?2:1); }
+
+// ===================== pointer =====================
+const ray=new THREE.Raycaster(), ndc=new THREE.Vector2();
+let drag=null;
+function toScreen(v){ const p=v.clone().project(camera); return new THREE.Vector2((p.x*.5+.5)*innerWidth,(-p.y*.5+.5)*innerHeight); }
+function seqTangent(i){ return toScreen(loopPos[(i+1)%18]).sub(toScreen(loopPos[i])).normalize(); }
+function pickLoop(ev){ ndc.set((ev.clientX/innerWidth)*2-1,-(ev.clientY/innerHeight)*2+1); ray.setFromCamera(ndc,camera);
+  const hits=ray.intersectObjects(ballFlat,false);
+  for (const h of hits){ const {t,s}=h.object.userData; const i=seqEntry.findIndex(e=>e.t===t&&e.s===s); if (i>=0) return i; } return -1; }
+renderer.domElement.addEventListener('pointerdown', ev=>{
+  if (animating){ controls.enabled=false; return; }
+  const i=pickLoop(ev);
+  if (i>=0){ controls.enabled=false; drag={i,frac:0,last:new THREE.Vector2(ev.clientX,ev.clientY),tan:seqTangent(i)}; }
+  else controls.enabled=true;
+}, true);
+addEventListener('pointermove', ev=>{ if(!drag) return;
+  const cur=new THREE.Vector2(ev.clientX,ev.clientY), d=cur.clone().sub(drag.last); drag.last.copy(cur);
+  drag.frac+=drag.tan.dot(d)/55;
+  while (drag.frac>=1){ commitShift(1); recolorLoop(); drag.frac-=1; }
+  while (drag.frac<=-1){ commitShift(-1); recolorLoop(); drag.frac+=1; }
+  offsetLoop(drag.frac); renderOnce();
+}, true);
+addEventListener('pointerup', ()=>{ if(drag){ drag=null; loopHome(); refresh(); renderOnce(); } controls.enabled=true; }, true);
+
+// ===================== UI =====================
+function refresh(){ const n={red:0,grn:0,blu:0,yel:0}; tunnelBalls.forEach(t=>t.forEach(c=>n[c]++));
+  el('c-red').textContent=n.red; el('c-grn').textContent=n.grn; el('c-blu').textContent=n.blu; el('c-yel').textContent=n.yel;
+  const ok=tunnelBalls.every((t,i)=>t.every(c=>c===homeColor[i])); const s=el('status'); s.textContent=ok?'★ Solved':'Scrambled'; s.classList.toggle('solved',ok); }
+el('twist').onclick=()=>doTwist();
+el('flip').onclick=()=>doFlip();
+el('shiftL').onclick=()=>{ if(!animating) doShift(-1); };
+el('shiftR').onclick=()=>{ if(!animating) doShift(1); };
+el('shuffle').onclick=()=>{ if(animating) return;
+  const keys=Object.keys(SEL);
+  for (let n=0;n<26;n++){ const k=1+(n*7+3)%4, dir=(n%3===0)?-1:1; for (let j=0;j<k;j++) commitShift(dir);
+    if (n%2===1){ const st=keys[(n*5)%6]; stateLetter=st[0]; stateFlip=+st[1]; sel=SEL[st].slice(); rebuildSeq(); } }
+  stateLetter='B'; stateFlip=2; sel=SEL.B2.slice(); buildScene(); el('cfg').textContent='State B2'; };
+el('reset').onclick=()=>{ if(animating) return; tunnelBalls=solvedState(); stateLetter='B'; stateFlip=2; sel=SEL.B2.slice(); buildScene(); el('cfg').textContent='State B2'; };
+el('spin').onclick=()=>{ autoRotateWanted=!autoRotateWanted; el('spin').textContent='Auto-rotate: '+(autoRotateWanted?'On':'Off'); };
+
+buildScene();
+
+// ===================== loop =====================
+addEventListener('resize', ()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+const _q=new THREE.Quaternion();
+function ease(t){ return t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2; }
+(function tick(){ requestAnimationFrame(tick);
+  if (foldAnim){ const t=Math.min(1,(performance.now()-foldAnim.t0)/foldAnim.dur), ang=Math.PI*ease(t);
+    for (const it of foldAnim.items){ _q.setFromAxisAngle(it.axis,ang);
+      it.m.position.copy(it.p0.clone().sub(it.piv).applyQuaternion(_q).add(it.piv));
+      it.m.quaternion.copy(_q.clone().multiply(it.q0)); } }
+  controls.autoRotate=autoRotateWanted && !drag && !animating;
+  controls.update(); renderer.render(scene,camera);
+})();
+</script>
+</body>
+</html>
